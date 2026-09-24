@@ -1,4 +1,4 @@
-# Stremio CLI
+# stremioctl
 
 Control the Stremio desktop app from a terminal, from an AI agent, or by voice from your phone.
 
@@ -11,6 +11,11 @@ Tested with Stremio 4.4 on Windows.
 ## Quick start
 
 You need Python 3.9 or newer and the [Stremio desktop app](https://www.stremio.com/downloads), running.
+
+```powershell
+git clone https://github.com/leewsimpson/stremioctl.git
+cd stremioctl
+```
 
 1. **Add a stream addon.** Stremio's catalog tells `stremioctl` what exists; a stream addon supplies the streams. In Stremio, open Addons → your stream addon → Configure (or Share) and copy its manifest URL, then:
 
