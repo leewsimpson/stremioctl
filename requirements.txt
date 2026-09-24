@@ -1,0 +1,2 @@
+# Only for stremio_mcp.py; stremioctl.py is stdlib only.
+mcp>=2.2,<3
