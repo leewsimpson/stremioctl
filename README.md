@@ -60,13 +60,15 @@ Every command prints JSON. Run `python stremioctl.py <command> -h` for all flags
 3. If no match is clearly ahead, the command lists the candidates instead of guessing. Pass `--year` or the IMDb id to choose.
 4. A season or episode means a series.
 
-**The stream.** It takes the first stream, in addon order, that matches your playback preferences:
+**The stream.** It takes the first stream, in addon order, that matches the built-in preferences:
 
 - **4K**
 - **15–30 GB.** About 20 GB is plenty; 50 GB+ remuxes are skipped.
 - **No TrueHD audio**, because it fails to play in Stremio. DD+, DD, AAC and Atmos over DD+ are fine.
 
-If nothing matches, it relaxes size first, then resolution. It never relaxes TrueHD. The rules live in `PREFERENCE_TIERS` in `stremioctl.py`. `watch --rank N` plays a specific stream from `streams` instead.
+If nothing matches, it relaxes size first, then resolution. It never relaxes TrueHD.
+
+These preferences are hard-coded, not settings: they live in `PREFERENCE_TIERS` in `stremioctl.py`, tuned for one setup (a 4K TV and fast disk), so they may not match yours. Until they are configurable — see [Possible improvements](#possible-improvements) — you can override them per play with `watch --rank N`, or edit the tiers in the source.
 
 ### Trailers
 
@@ -80,3 +82,11 @@ If nothing matches, it relaxes size first, then resolution. It never relaxes Tru
 - **Playback** starts by handing the app a video URL. Stremio 4 sends any URL that contains an info hash to a detail page instead of the player, so playback goes through a small redirect shim on `127.0.0.1:11480`. The shim serves hash-free `.mp4` URLs that redirect to the real stream. It starts automatically, keeps running in the background, and shows up in `status`.
 
 Pause, seek and stop aren't available from outside the app; use the Stremio window for those.
+
+## Possible improvements
+
+Ideas, not commitments.
+
+- **Configurable playback preferences.** The rules `watch` uses to pick a stream — 4K, 15–30 GB, never TrueHD — are hard-coded in `PREFERENCE_TIERS` in `stremioctl.py`, so they reflect one viewer's tastes. They could become a `preferences` section in `~/.stremioctl.json` (preferred resolution, size range, whether TrueHD is banned), keeping today's values as the defaults, plus flags like `--res` and `--max-size` on `watch`.
+- **Playback control.** `status` can see the app, but pause, seek and stop still need the Stremio window. If the app's embedded player can be driven from outside, the CLI and the MCP server could expose it.
+- **Cross-platform support.** The code already has non-Windows fallbacks (finding the app with `shutil.which`, trailers under `~/.cache` when `LOCALAPPDATA` is absent), but only Windows is tested. Verifying macOS and Linux would let the "Tested with Stremio 4.4 on Windows" caveat go.
