@@ -42,6 +42,8 @@ the user wait. If it reports several matching titles, ask which one and call aga
 it's about), not before playing.
 - `watch` picks a stream by the user's preferences (4K, about 20 GB, never TrueHD audio). Only pass \
 `rank` when the user asks for a different stream; use `list_streams` to show them the options.
+- `watch` starts Stremio if it isn't running, checks each stream responds before playing it, and \
+falls back to the next preferred stream if one doesn't; it reports any it skipped.
 - Playback takes several seconds to start. Pausing, seeking and stopping happen in the Stremio window, \
 not through these tools.
 - Keep replies short: the user is usually speaking to you from the couch."""
@@ -110,6 +112,8 @@ def run(fn, **kwargs):
             source = result.get("source") or {}
             outcome = (f"ok: {result['title']} ({result.get('id')}), rank {result.get('rank')}"
                        f" [{source.get('res')}, {source.get('size_gb')} GB, {result.get('pickedBecause')}]")
+            for skipped in result.get("skipped", []):
+                outcome += f"; skipped rank {skipped['rank']}: {skipped['error']}"
         return result
     except ctl.CliError as e:
         outcome = f"error: {e}"

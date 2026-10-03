@@ -179,4 +179,5 @@ If the URL leaks, put a new `MCP_SECRET` in `.env`, restart the server, and upda
 | A tool call fails with "Field required" | The chat app has a stale tool list. Refresh the plugin and start a new chat. |
 | "Several titles match …" | Working as intended. Say which one, e.g. with the year. |
 | "Every stream has TrueHD audio" | Nothing playable matched. Ask for the stream list and choose a rank. |
-| Torrent sources fail with "streaming server not reachable" | Start the Stremio app. Its streaming server runs only while the app is open. |
+| "Started Stremio, but its streaming server didn't come up" | Stremio is launched automatically but took over 60 s to start, or crashed. Start it by hand and check `status`. |
+| "No stream of … would play" | Every stream tried timed out or errored at the addon or debrid service. Each try warms the resolver, so asking again a minute later often works; or choose another with `rank`. |

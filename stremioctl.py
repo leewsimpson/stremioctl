@@ -63,6 +63,7 @@ def server_up():
 
 
 def require_server():
+    ensure_app()
     if not server_up():
         raise CliError(f"Stremio streaming server not reachable at {SERVER}. Start the Stremio app.")
 
@@ -152,11 +153,29 @@ def stremio_exe():
 
 
 def send_to_app(target):
-    """Hand a stremio:// link, magnet or video URL to the running (or new) Stremio instance."""
+    """Hand a stremio:// link, magnet or video URL to the running Stremio instance, starting it first."""
+    ensure_app()
+    subprocess.Popen([stremio_exe(), target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def ensure_app(timeout=60):
+    """Start Stremio if it isn't running and wait for its streaming server.
+
+    A link passed to a Stremio that is still starting up is often dropped, so launch it bare first."""
+    if server_up() and app_running() is not False:
+        return
     exe = stremio_exe()
     if not exe:
         raise CliError("Stremio desktop app not found.")
-    subprocess.Popen([exe, target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not app_running():
+        subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if server_up():
+            time.sleep(3)  # the UI comes up a moment after the server
+            return
+        time.sleep(1)
+    raise CliError(f"Started Stremio, but its streaming server didn't come up within {timeout}s.")
 
 
 def app_running():
@@ -226,6 +245,35 @@ def run_shim():
             pass
 
     http.server.ThreadingHTTPServer(("127.0.0.1", SHIM_PORT), Handler).serve_forever()
+
+
+def probe_url(url, timeout, need=1 << 20):
+    """Check a stream URL delivers video and return the URL it finally redirects to.
+
+    Debrid resolvers sometimes hang on a file they list as cached, or answer and then stall, and
+    Stremio then sits on a black screen with no error. So require `need` bytes within `timeout`."""
+    deadline = time.time() + timeout
+    req = urllib.request.Request(url, headers={"Range": f"bytes=0-{need - 1}", "User-Agent": "stremioctl"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            ctype = resp.headers.get("Content-Type", "")
+            if resp.status not in (200, 206) or re.match(r"text/|application/json", ctype):
+                raise CliError(f"stream answered {resp.status} {ctype or 'with no content type'}")
+            got = 0
+            while got < need:
+                if time.time() > deadline:
+                    raise TimeoutError
+                chunk = resp.read(min(65536, need - got))
+                if not chunk:
+                    break
+                got += len(chunk)
+            return resp.url
+    except urllib.error.HTTPError as e:
+        raise CliError(f"stream answered HTTP {e.code}") from e
+    except (urllib.error.URLError, OSError) as e:
+        reason = getattr(e, "reason", e)
+        raise CliError(f"stream sent no video within {timeout}s" if isinstance(reason, (socket.timeout, TimeoutError))
+                       else f"stream unreachable: {reason}") from e
 
 
 def safe_name(title, ext):
@@ -519,14 +567,21 @@ def stream_facts(s):
     return {"res": res, "size_gb": size_gb, "truehd": bool(re.search(r"true-?hd", text, re.I))}
 
 
-def preferred_rank(streams):
-    """(rank, tier) of the stream the playback preferences pick, or (None, None)."""
+def preference_order(streams):
+    """[(rank, tier)] of every allowed stream, best first by the playback preferences."""
     facts = [stream_facts(s) for _, s in streams]
+    order, seen = [], set()
     for tier, ok in PREFERENCE_TIERS:
         for i, f in enumerate(facts):
-            if not f["truehd"] and ok(f):
-                return i, tier
-    return None, None
+            if i not in seen and not f["truehd"] and ok(f):
+                order.append((i, tier))
+                seen.add(i)
+    return order
+
+
+def preferred_rank(streams):
+    """(rank, tier) of the stream the playback preferences pick, or (None, None)."""
+    return (preference_order(streams) or [(None, None)])[0]
 
 
 def cmd_streams(args):
@@ -537,28 +592,54 @@ def cmd_streams(args):
             "streams": [dict(rank=i, **stream_label(a, s)) for i, (a, s) in enumerate(streams[: args.limit])]}
 
 
+# Without a chosen rank, check the best few streams at once and play the most preferred that delivers
+# within PROBE_SECS. A chosen rank gets one long wait: a debrid resolver's first request for a file
+# can take 30 s or more.
+MAX_TRIES = 4
+PROBE_SECS, CHOSEN_PROBE_SECS = 20, 45
+
+
 def cmd_watch(args):
     video_id = video_id_for(args)
     streams = fetch_streams(args.type, video_id)
     if not streams:
         raise CliError("No playable streams found from configured addons.")
     if args.rank is None:
-        rank, tier = preferred_rank(streams)
-        if rank is None:
+        candidates = preference_order(streams)[:MAX_TRIES]
+        if not candidates:
             raise CliError("Every stream has TrueHD audio, which fails to play. Pick one with --rank.")
     else:
-        rank, tier = (args.rank if args.rank < len(streams) else 0), "chosen rank"
-    addon_name, s = streams[rank]
+        candidates = [(args.rank if args.rank < len(streams) else 0, "chosen rank")]
     meta = cinemeta_meta(args.type, args.id)
     title = meta.get("name") or args.id
     if args.type == "series":
         title += f" S{args.season:02d}E{args.episode:02d}"
-    if s.get("infoHash"):
-        trackers = [x[len("tracker:"):] for x in s.get("sources", []) if x.startswith("tracker:")]
-        result = play_torrent(s["infoHash"].lower(), trackers, s.get("fileIdx"), None, title)
-    else:
-        result = play_url(s["url"], title)
-    return {"title": title, "id": args.id, "rank": rank, "pickedBecause": tier, "source": stream_label(addon_name, s), **result}
+    ensure_app()
+    wait = PROBE_SECS if args.rank is None else CHOSEN_PROBE_SECS
+    pool = ThreadPoolExecutor(len(candidates))
+    probes = {rank: pool.submit(probe_url, streams[rank][1]["url"], wait)
+              for rank, _ in candidates if not streams[rank][1].get("infoHash")}
+    pool.shutdown(wait=False)  # don't hold up playback for the slower probes
+    failed = []
+    for rank, tier in candidates:
+        addon_name, s = streams[rank]
+        try:
+            if s.get("infoHash"):
+                trackers = [x[len("tracker:"):] for x in s.get("sources", []) if x.startswith("tracker:")]
+                result = play_torrent(s["infoHash"].lower(), trackers, s.get("fileIdx"), None, title)
+            else:
+                result = {**play_url(probes[rank].result(), title), "playing": s["url"]}
+        except CliError as e:
+            failed.append({"rank": rank, "error": str(e)})
+            continue
+        out = {"title": title, "id": args.id, "rank": rank, "pickedBecause": tier,
+               "source": stream_label(addon_name, s), **result}
+        if failed:
+            out["skipped"] = failed
+        return out
+    raise CliError(f"No stream of {title} would play: "
+                   + "; ".join(f"rank {f['rank']}: {f['error']}" for f in failed)
+                   + ". Try another with --rank (see `streams`).")
 
 
 def cmd_trailer(args):

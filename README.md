@@ -10,7 +10,7 @@ Tested with Stremio 4.4 on Windows.
 
 ## Quick start
 
-You need Python 3.9 or newer and the [Stremio desktop app](https://www.stremio.com/downloads), running.
+You need Python 3.9 or newer and the [Stremio desktop app](https://www.stremio.com/downloads). Commands that need the app start it if it isn't running.
 
 ```powershell
 git clone https://github.com/leewsimpson/stremioctl.git
@@ -67,6 +67,8 @@ Every command prints JSON. Run `python stremioctl.py <command> -h` for all flags
 - **No TrueHD audio**, because it fails to play in Stremio. DD+, DD, AAC and Atmos over DD+ are fine.
 
 If nothing matches, it relaxes size first, then resolution. It never relaxes TrueHD.
+
+**Checking the stream.** Debrid resolvers sometimes hang for 30 s or more on a file they list as cached, or answer and then stall, and Stremio then shows a black screen with no error. So before playing, `watch` downloads the first 1 MB of the 4 most preferred URL streams at once, and plays the most preferred one that delivers within 20 s. The ones passed over are listed under `skipped`. A stream chosen with `--rank` gets one 45 s wait instead. Stremio is handed the URL the stream resolved to, so it starts without a second wait.
 
 These preferences are hard-coded, not settings: they live in `PREFERENCE_TIERS` in `stremioctl.py`, tuned for one setup (a 4K TV and fast disk), so they may not match yours. Until they are configurable — see [Possible improvements](#possible-improvements) — you can override them per play with `watch --rank N`, or edit the tiers in the source.
 
